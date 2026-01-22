@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "inference-engine"
+version = "0.0.1"
+authors = [{ name = "George" }]
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+readme = "README.md"
+description = "Simple inference engine"
+requires-python = ">=3.10"
+dependencies = [
+    "torch>=2.4.0",
+    "transformers",
+    "accelerate",
+]
+
+[project.urls]
+Homepage="https://github.com/horheynm/inference-engine"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["inference*"]
