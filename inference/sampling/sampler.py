@@ -17,61 +17,79 @@ class Sampler(nn.Module):
         logits = logits.div_(params.temperature)
 
         if (top_k := params.top_k) is not None:
-            top_k_indices = top_k(
+            logits = top_k_filter(
                 top_k=top_k,
                 logits=logits,
             )
 
-            logits = logits.gather(index=top_k_indices, dim=-1)
-
         if (top_p := params.top_p) is not None:
-            top_p_indices = top_p(top_p=top_p, logits=logits)
+            top_p_indices = top_p_filter(top_p=top_p, logits=logits)
             logits = logits.gather(index=top_p_indices, dim=-1)
 
+        return logits
 
-def top_k(
-    top_k: int,
+
+def top_k(logits: torch.Tensor, k: int, dim: int = -1):
+    """Return the top k indices"""
+
+    indices = torch.argsort(logits, descending=True, dim=dim)
+    top_k_indices = indices[..., :k]
+    return top_k_indices
+
+
+def top_k_filter(
     logits: torch.Tensor,
+    k: int,
+    filter_value: float = -float("inf"),
+    use_lib: bool = True,
 ) -> torch.Tensor:
     """
-    Return the top_k indices
+    Keep only top-k logits per row; mask the rest to -inf.
+    logits: [..., vocab]
+
     """
-    top_k = min(top_k, logits.size(-1))
-    indices = torch.argsort(
-        logits,
-        descending=True,
-        dim=-1,
-    )
-    return indices[..., :top_k]
+    vocab = logits.size(-1)
+    k = min(k, vocab)
+
+    if use_lib:
+        top_k_vals = torch.topk(logits, k, dim=-1).values
+    else:
+        indices = top_k(logits=logits, k=k, dim=-1)
+        top_k_vals = logits.gather(index=indices, dim=-1)
+
+    thresh = top_k_vals[..., -1, None]
+    keep_mask = logits >= thresh
+    return logits.masked_fill(~keep_mask, filter_value)
 
 
-def top_p(
-    top_p: float,
+def top_p_filter(
     logits: torch.Tensor,
-):
+    p: float,
+    filter_value: float = -float("inf"),
+    min_tokens_to_keep: int = 1,
+) -> torch.Tensor:
     """
     Return the top_p indices
     """
-    logit_probs = torch.softmax(logits, dim=-1)
-    # cumsum = torch.cumsum(logit_probs, dim=-1)
-    sorted_idx = torch.argsort(logits, descending=True, dim=-1)
-    sorted_probs = logit_probs.gather(index=sorted_idx, dim=-1)
-    cdf = sorted_probs.cumsum(dim=-1)
+    if not (0.0 < float(p) <= 1.0):
+        raise ValueError(f"p must be in (0, 1], got {p}")
 
-    # indices to keep
-    mask = cdf < top_p
+    sorted_logits, sorted_idx = torch.sort(logits, dim=-1, descending=True)
 
-    # shift to include probs that include 0.8
-    mask[..., 1:] = mask[..., :-1].clone()
-    mask[..., 0] = True
+    # use max for stability
+    m = sorted_logits[..., 0, None]
+    probs_sorted = (sorted_logits - m).softmax(dim=-1)
+    cdf = probs_sorted.cumsum(dim=-1)
 
-    filtered_sorted_probs = sorted_probs * mask
-    filtered_sorted_probs = filtered_sorted_probs / filtered_sorted_probs.sum(
-        dim=-1, keepdim=True
-    )
+    # remove tokens strictly after the nucleus; keep the token that crosses p
+    to_remove_sorted = cdf > p
+    to_remove_sorted = to_remove_sorted.roll(shifts=1, dims=-1)
+    to_remove_sorted[..., 0] = False
 
-    sampled_sorted = torch.multinomial(filtered_sorted_probs, 1)  # (...)
+    if min_tokens_to_keep > 1:
+        to_remove_sorted[..., :min_tokens_to_keep] = False
 
-    next_token_index = sorted_idx.gather(-1, sampled_sorted)
+    to_remove = torch.zeros_like(logits, dtype=torch.bool)
+    to_remove.scatter_(dim=-1, index=sorted_idx, src=to_remove_sorted)
 
-    return next_token_index
+    return logits.masked_fill(to_remove, filter_value)

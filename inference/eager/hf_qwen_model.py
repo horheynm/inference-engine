@@ -21,13 +21,12 @@ text = tokenizer.apply_chat_template(
 model_inputs = tokenizer([text], return_tensors="pt").to(model.device)
 model_kwargs = dict(
     do_sample=True,
-    top_k=2,
-    top_p=0.2,
+    top_k=20,
+    top_p=0.9,
 )
 
 
 # conduct text completion
-breakpoint()
 generated_ids = model.generate(
     **model_inputs,
     max_new_tokens=32768,

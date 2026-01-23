@@ -15,3 +15,6 @@ class SamplingParams:
 
         if self.top_k <= 0:
             raise ValueError(f"`top_k` must be greater than 0, got {self.top_k}")
+
+        if not (0.0 < float(self.top_p) <= 1.0):
+            raise ValueError(f"p must be in (0, 1], got {self.top_p}")
