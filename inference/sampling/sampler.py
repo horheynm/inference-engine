@@ -9,24 +9,45 @@ class Sampler(nn.Module):
     ):
         super().__init__()
 
-    def foward(
+    @torch.inference_mode()
+    def forward(
         self,
         logits: torch.Tensor,
         params: SamplingParams,
+        use_lib: bool = True,
     ):
-        logits = logits.div_(params.temperature)
+        top_k, top_p = params.top_k, params.top_p
+        if params.temperature == 0 or (top_k is None and top_p is None):
+            # greedy decoding
+            return logits.argmax(dim=-1)
 
-        if (top_k := params.top_k) is not None:
+        logits = logits.div(params.temperature)
+
+        if top_k is not None:
             logits = top_k_filter(
-                top_k=top_k,
+                k=top_k,
                 logits=logits,
             )
 
-        if (top_p := params.top_p) is not None:
-            top_p_indices = top_p_filter(top_p=top_p, logits=logits)
-            logits = logits.gather(index=top_p_indices, dim=-1)
+        if top_p is not None:
+            logits = top_p_filter(p=top_p, logits=logits)
 
-        return logits
+        probs = torch.softmax(logits, dim=-1)
+
+        if use_lib:
+            next_ids = torch.multinomial(probs, num_samples=1)
+        else:
+            next_ids = sample_multinomial(probs)
+
+        return next_ids
+
+
+def sample_multinomial(probs: torch.Tensor):
+    rr = torch.rand(probs.shape[0], 1, device=probs.device, dtype=probs.dtype)
+    cumsum = torch.cumsum(probs, dim=-1)
+
+    idx = (cumsum <= rr).sum(dim=-1, keepdim=True)
+    return idx
 
 
 def top_k(logits: torch.Tensor, k: int, dim: int = -1):
@@ -52,13 +73,13 @@ def top_k_filter(
     k = min(k, vocab)
 
     if use_lib:
-        top_k_vals = torch.topk(logits, k, dim=-1).values
+        top_k_indices = torch.topk(logits, k, dim=-1).indices
     else:
-        indices = top_k(logits=logits, k=k, dim=-1)
-        top_k_vals = logits.gather(index=indices, dim=-1)
+        top_k_indices = top_k(logits=logits, k=k, dim=-1)
 
-    thresh = top_k_vals[..., -1, None]
-    keep_mask = logits >= thresh
+    keep_mask = torch.zeros_like(logits, dtype=torch.bool)
+    keep_mask.scatter_(dim=-1, index=top_k_indices, value=True)
+
     return logits.masked_fill(~keep_mask, filter_value)
 
 
