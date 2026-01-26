@@ -2,4 +2,7 @@
 Simple inference engine
 
 
-Inspired by vllm and nano-vllm
+Inspired by 
+* vllm 
+* nano-vllm
+* flashinfer

@@ -1,7 +1,13 @@
 import pytest
 import torch
 
-from inference.sampling.sampler import top_k, top_k_filter, top_p_filter, Sampler
+from inference.sampling.sampler import (
+    top_k,
+    top_k_heap,
+    apply_top_k_logits,
+    apply_top_p_logits,
+    Sampler,
+)
 from inference.sampling.sampling_params import SamplingParams
 
 BATCH = 4
@@ -24,10 +30,18 @@ def test_top_k(logits: torch.Tensor) -> None:
     assert torch.allclose(top_k_indices, torch_topk_indices, atol=0)
 
 
+def test_top_k_heap(logits: torch.Tensor) -> None:
+    heap_indices = top_k_heap(k=TOP_K, logits=logits.clone())
+    assert heap_indices.shape == (BATCH, TOP_K)
+
+    torch_topk_indices = torch.topk(logits, TOP_K, dim=-1).indices
+    assert torch.equal(heap_indices, torch_topk_indices)
+
+
 @pytest.mark.parametrize("use_lib", (True, False))
-def test_top_k_filter(logits: torch.Tensor, use_lib: bool) -> None:
+def test_apply_top_k_logits(logits: torch.Tensor, use_lib: bool) -> None:
     filter_value = float("-inf")
-    filtered_logits = top_k_filter(
+    filtered_logits = apply_top_k_logits(
         logits=logits, k=TOP_K, filter_value=filter_value, use_lib=use_lib
     )
     indices = torch.topk(logits, TOP_K, dim=-1).indices
@@ -39,14 +53,14 @@ def test_top_k_filter(logits: torch.Tensor, use_lib: bool) -> None:
     assert torch.allclose(expected, filtered_logits, atol=0)
 
 
-def test_top_p_filter(logits: torch.Tensor):
+def test_apply_top_p_logits(logits: torch.Tensor):
     from transformers.generation import TopPLogitsWarper
 
     wrapper = TopPLogitsWarper(top_p=TOP_P)
     expected = wrapper(input_ids=None, scores=logits)
 
-    filtered_logits = top_p_filter(p=TOP_P, logits=logits)
-    assert torch.allclose(expected, filtered_logits)
+    filtered_logits = apply_top_p_logits(p=TOP_P, logits=logits)
+    assert torch.allclose(expected, filtered_logits, atol=0)
 
 
 @pytest.mark.parametrize("use_lib", (True, False))
@@ -62,15 +76,16 @@ def test_sampler(logits: torch.Tensor, use_lib: bool) -> None:
     assert next_ids.shape == (BATCH, 1)
 
     filtered_logits = logits.div(params.temperature)
-    filtered_logits = top_k_filter(logits=filtered_logits, k=TOP_K)
-    filtered_logits = top_p_filter(logits=filtered_logits, p=TOP_P)
+    filtered_logits = apply_top_k_logits(logits=filtered_logits, k=TOP_K)
+    filtered_logits = apply_top_p_logits(logits=filtered_logits, p=TOP_P)
 
     chosen_logits = filtered_logits.gather(index=next_ids, dim=-1).squeeze(-1)
     assert torch.isfinite(chosen_logits).all()
 
 
 def test_sampler_greedy(logits: torch.Tensor) -> None:
-    params = SamplingParams(top_k=None, top_p=None, temperature=1.0)
+    
+    params = SamplingParams(top_k=None, top_p=None, temperature=-1)
     sampler = Sampler()
 
     next_ids = sampler(logits=logits, params=params).squeeze(-1)

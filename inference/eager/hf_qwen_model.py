@@ -10,15 +10,20 @@ model = AutoModelForCausalLM.from_pretrained(
 )
 
 # prepare the model input
-prompt = "Give me a short introduction to large language model."
-messages = [{"role": "user", "content": prompt}]
-text = tokenizer.apply_chat_template(
-    messages,
-    tokenize=False,
-    add_generation_prompt=True,
-    enable_thinking=True,  # Switches between thinking and non-thinking modes. Default is True.
-)
-model_inputs = tokenizer([text], return_tensors="pt").to(model.device)
+prompts = [
+    "Give me a short introduction to large language model.",
+    "Explain top-k and top-p sampling in one paragraph.",
+]
+texts = [
+    tokenizer.apply_chat_template(
+        [{"role": "user", "content": prompt}],
+        tokenize=False,
+        add_generation_prompt=True,
+        enable_thinking=True,  # Switches between thinking and non-thinking modes. Default is True.
+    )
+    for prompt in prompts
+]
+model_inputs = tokenizer(texts, return_tensors="pt", padding=True).to(model.device)
 model_kwargs = dict(
     do_sample=True,
     top_k=20,
