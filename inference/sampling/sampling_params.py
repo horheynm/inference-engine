@@ -3,9 +3,9 @@ from dataclasses import dataclass
 
 @dataclass
 class SamplingParams:
-    temperature: float | None = 1.0
+    temperature: float = 1.0
     top_k: int | None = None  # 20
-    top_p: float | None = None
+    top_p: float | None = None  # 0.9
 
     def __post_init__(self):
 

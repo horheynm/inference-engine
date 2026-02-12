@@ -4,8 +4,9 @@ from inference.sampling.sampling_params import SamplingParams
 
 # TODO: Use flashinfer kernels
 
+
 class Sampler(nn.Module):
-    
+
     def __init__(
         self,
     ):
@@ -48,11 +49,30 @@ class Sampler(nn.Module):
         return next_ids
 
 
-def sample_multinomial(probs: torch.Tensor):
-    rr = torch.rand(probs.shape[0], 1, device=probs.device, dtype=probs.dtype)
-    cumsum = torch.cumsum(probs, dim=-1)
+def cumsum(probs: torch.Tensor, dim: int = -1, use_lib: bool = True):
+    V = probs.shape[dim]
+    if use_lib:
+        ones = torch.ones((V, V))
+        triu = ones.triu().to(dtype=probs.dtype)
+    else:
+        # manual
+        indices = torch.arange(V)  # [V]
+        rows = indices.unsqueeze(-1)  # [V, 1]
 
-    idx = (cumsum <= rr).sum(dim=-1, keepdim=True)
+        # indices[:1] >= rows # [V, 1], compare V[0] with all of rows
+        triu = (indices >= rows).to(dtype=probs.dtype)
+
+    return probs @ triu
+
+
+def sample_multinomial(probs: torch.Tensor, use_lib: bool = True):
+    rr = torch.rand(probs.shape[0], 1, device=probs.device, dtype=probs.dtype)
+    if use_lib:
+        cdf = probs.cumsum(dim=-1) / probs.sum(dim=-1, keepdim=True)
+    else:
+        cdf = cumsum(probs=probs, dim=-1) / probs.sum(dim=-1, keepdim=True)
+
+    idx = (cdf <= rr).sum(dim=-1, keepdim=True)
     return idx
 
 
@@ -113,8 +133,10 @@ def apply_top_k_logits(
     if use_lib:
         top_k_indices = torch.topk(logits, k, dim=-1).indices
     else:
-        top_k_indices = top_k(logits=logits, k=k, dim=-1)  # O(V logV)
-        # top_k_indices = top_k_heap(logits=logits, k=k) # O(V logk), but not GPU friendly
+        top_k_indices = top_k(logits=logits, k=k, dim=-1)  # O(B * V logV)
+
+        # flake8: noqa
+        # top_k_indices = top_k_heap(logits=logits, k=k) # O(B * V logk), not GPU friendly
 
     filter_idx = torch.ones_like(logits, dtype=torch.bool)
     filter_idx.scatter_(dim=-1, index=top_k_indices, value=False)

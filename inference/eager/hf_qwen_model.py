@@ -19,7 +19,7 @@ texts = [
         [{"role": "user", "content": prompt}],
         tokenize=False,
         add_generation_prompt=True,
-        enable_thinking=True,  # Switches between thinking and non-thinking modes. Default is True.
+        enable_thinking=True,
     )
     for prompt in prompts
 ]
@@ -29,7 +29,6 @@ model_kwargs = dict(
     top_k=20,
     top_p=0.9,
 )
-
 
 # conduct text completion
 generated_ids = model.generate(

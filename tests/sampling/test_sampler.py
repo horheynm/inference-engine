@@ -7,6 +7,8 @@ from inference.sampling.sampler import (
     apply_top_k_logits,
     apply_top_p_logits,
     Sampler,
+    cumsum,
+    sample_multinomial,
 )
 from inference.sampling.sampling_params import SamplingParams
 
@@ -84,10 +86,47 @@ def test_sampler(logits: torch.Tensor, use_lib: bool) -> None:
 
 
 def test_sampler_greedy(logits: torch.Tensor) -> None:
-    
+
     params = SamplingParams(top_k=None, top_p=None, temperature=-1)
     sampler = Sampler()
 
     next_ids = sampler(logits=logits, params=params).squeeze(-1)
     expected = logits.argmax(dim=-1)
     assert torch.equal(next_ids, expected)
+
+
+@pytest.mark.parametrize("use_lib", (True, False))
+def test_cumsum(logits: torch.Tensor, use_lib: bool):
+    probs = torch.softmax(logits, dim=-1)
+    expected = torch.cumsum(probs, dim=-1)
+    actual = cumsum(probs=probs, dim=-1, use_lib=use_lib)
+
+    assert torch.allclose(expected, actual)
+
+
+def test_sample_multinomial_matches_between_paths(logits: torch.Tensor) -> None:
+    probs = torch.softmax(logits, dim=-1)
+
+    # Both implementations should match for the same RNG stream; they only differ
+    # in how the CDF is computed (torch cumsum vs manual cumsum).
+    torch.manual_seed(0)
+    expected = sample_multinomial(probs=probs, use_lib=True)
+
+    torch.manual_seed(0)
+    actual = sample_multinomial(probs=probs, use_lib=False)
+
+    assert expected.shape == (BATCH, 1)
+    assert torch.equal(expected, actual)
+
+
+@pytest.mark.parametrize("use_lib", (True, False))
+def test_sample_multinomial_one_hot(use_lib: bool) -> None:
+    probs = torch.zeros((BATCH, VOCAB_SIZE), dtype=torch.float32)
+    hot_idx = 123
+    probs[:, hot_idx] = 1.0
+
+    torch.manual_seed(0)
+    sampled = sample_multinomial(probs=probs, use_lib=use_lib)
+
+    assert sampled.shape == (BATCH, 1)
+    assert torch.equal(sampled, torch.full((BATCH, 1), hot_idx, dtype=torch.int64))
